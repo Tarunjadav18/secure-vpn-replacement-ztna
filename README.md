@@ -58,3 +58,9 @@ The project is deployed on Render at <https://ztna-demo-gateway.onrender.com>. T
 | `GET /apps/admin` | Valid token, managed + compliant posture, admin role | Admin response |
 
 Every login and access decision is appended as JSON Lines to `ZTNA_AUDIT_LOG` (default `/tmp/ztna-audit.jsonl`).
+
+## Wazuh monitoring (local demonstration)
+
+The gateway emits structured JSON audit events that a Wazuh agent can collect. Example agent configuration and Wazuh manager alert rules are in [`wazuh/`](wazuh/). This adds monitoring for denied access and repeated failed sign-ins; Wazuh does not make or enforce gateway access decisions. Run the gateway on the same Mac/Linux host as the Wazuh agent and configure the agent to monitor `/tmp/ztna-audit.jsonl`. The manager and agent must already be installed and enrolled; their installation is separate from this app. Check [`wazuh/README.md`](wazuh/README.md) for setup and verification steps.
+
+This integration is for the local demonstration. Render's filesystem is ephemeral and its internal audit file is not reachable by an agent on your Mac, so the committed sample config does not claim to collect Render events. Forwarding hosted events to a secured central collector is a separate deployment task.

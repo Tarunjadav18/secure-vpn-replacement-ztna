@@ -1,5 +1,9 @@
 import os
 import unittest
+import json
+import tempfile
+from pathlib import Path
+from unittest.mock import patch
 
 os.environ["ZTNA_ADMIN_PASSWORD"] = "test-password"
 from src.ztna.app import app, TOKENS
@@ -24,6 +28,17 @@ class ZtnaGatewayTests(unittest.TestCase):
 
     def test_login_rejects_bad_credentials(self):
         self.assertEqual(self.client.post("/login", json={"username": "admin", "password": "wrong"}).status_code, 401)
+
+    def test_failed_login_emits_structured_audit_event(self):
+        with tempfile.TemporaryDirectory() as directory:
+            audit_path = Path(directory) / "audit.jsonl"
+            with patch("src.ztna.app.AUDIT_LOG", audit_path):
+                response = self.client.post("/login", json={"username": "admin", "password": "wrong"})
+            self.assertEqual(response.status_code, 401)
+            event = json.loads(audit_path.read_text(encoding="utf-8").splitlines()[0])
+            self.assertEqual(event["event"], "login_denied")
+            self.assertEqual(event["user"], "admin")
+            self.assertIn("source_ip", event)
 
     def test_app_requires_authentication(self):
         self.assertEqual(self.client.get("/apps/portal").status_code, 401)

@@ -10,11 +10,17 @@ Flask access gateway (/login, /apps/*)
     |-- configured credential check -> short-lived in-memory bearer token
     |-- policy decision: authenticated identity + role + device posture claims
     |-- append-only JSONL decision event (local file)
+    |                         |
+    |                         +--> Wazuh agent (optional, same host)
+    |                                   |
+    |                                   +--> Wazuh manager rules and alerts
     v
 Named application route (portal or admin console)
 ```
 
 The prototype exposes only named application routes and never places the client on an internal subnet. Each request to a protected route is checked independently. `/apps/portal` permits admin and employee roles; `/apps/admin` permits only admin. Both require a valid token and managed/compliant posture claims.
+
+The optional Wazuh example monitors the JSONL file and raises alerts for denied access and repeated failed sign-ins. Wazuh is a detection and monitoring component here; it is not consulted by the gateway's permit/deny policy. The sample is intended for a local gateway and an enrolled Wazuh agent on the same host. It does not collect the Render service's ephemeral local file.
 
 ## Policy rule
 
@@ -38,7 +44,7 @@ A failed authentication yields HTTP 401. A failed authorization or posture decis
 | Stolen/guessable session identifier | Cryptographically random token and expiry | Bearer token theft remains possible; no revocation endpoint |
 | Broad network reach after login | Explicit application routes and per-route policy | Only two demonstration routes |
 | Untrusted device | Managed/compliant claims checked on every request | Claims are spoofable and not device attestation |
-| Untraceable decisions | JSONL permit/deny events | Local file is not durable or tamper resistant |
+| Untraceable decisions | JSONL permit/deny events; optional Wazuh collection and alerts | Local file is not durable or tamper resistant; Wazuh ingestion/rules require separate manager and agent setup |
 
 ## Production evolution
 
