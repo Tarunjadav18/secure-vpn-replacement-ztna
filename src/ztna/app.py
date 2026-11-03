@@ -9,12 +9,14 @@ from functools import wraps
 from pathlib import Path
 from secrets import token_urlsafe
 
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, render_template, request
 
 app = Flask(__name__)
 app.config["JSON_SORT_KEYS"] = True
 ADMIN_USER = os.getenv("ZTNA_ADMIN_USER", "admin")
-ADMIN_PASSWORD = os.getenv("ZTNA_ADMIN_PASSWORD", "change-me-now")
+ADMIN_PASSWORD = os.getenv("ZTNA_ADMIN_PASSWORD")
+if not ADMIN_PASSWORD:
+    raise RuntimeError("ZTNA_ADMIN_PASSWORD must be set before starting the gateway")
 TOKEN_TTL_SECONDS = int(os.getenv("ZTNA_TOKEN_TTL_SECONDS", "3600"))
 AUDIT_LOG = Path(os.getenv("ZTNA_AUDIT_LOG", "/tmp/ztna-audit.jsonl"))
 TOKENS: dict[str, dict] = {}
@@ -58,8 +60,7 @@ def requires_identity(fn):
 
 @app.get("/")
 def index():
-    return jsonify(service="ZTNA demonstration gateway", status="ok",
-                   endpoints=["POST /login", "GET /apps/portal", "GET /apps/admin", "GET /health"])
+    return render_template("index.html")
 
 
 @app.get("/health")
@@ -121,4 +122,4 @@ def admin_app():
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.getenv("PORT", "8000")))
+    app.run(host="127.0.0.1", port=int(os.getenv("PORT", "8000")))

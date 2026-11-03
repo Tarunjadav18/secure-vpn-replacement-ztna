@@ -16,7 +16,7 @@ export ZTNA_ADMIN_PASSWORD='use-a-long-random-local-secret'
 python -m src.ztna.app
 ```
 
-The service listens on `http://localhost:8000`. Login credentials default to `admin` and `change-me-now`; always set `ZTNA_ADMIN_PASSWORD` before use.
+The service listens on `http://127.0.0.1:8000`. Open that address in your Mac browser for the interactive demonstration. Set `ZTNA_ADMIN_PASSWORD` before starting the service; it fails closed if the secret is absent. The username defaults to `admin`.
 
 ```sh
 curl -s http://localhost:8000/health
@@ -24,7 +24,7 @@ curl -s -X POST http://localhost:8000/login -H 'Content-Type: application/json' 
   -d '{"username":"admin","password":"use-a-long-random-local-secret"}'
 ```
 
-Use the returned `access_token` in `Authorization: Bearer <token>`. For the demo posture check, send `X-Device-Managed: true` and `X-Device-Compliant: true`. Then request `/apps/portal` or `/apps/admin`.
+The homepage provides a browser-based login and application request flow. Enter the configured password, select the simulated managed/compliant posture checks, and request the portal or admin console. To exercise the API directly, use the returned `access_token` in `Authorization: Bearer <token>`, send `X-Device-Managed: true` and `X-Device-Compliant: true`, and request `/apps/portal` or `/apps/admin`.
 
 ## Test
 

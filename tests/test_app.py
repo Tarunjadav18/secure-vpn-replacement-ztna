@@ -14,6 +14,11 @@ class ZtnaGatewayTests(unittest.TestCase):
     def login(self):
         return self.client.post("/login", json={"username": "admin", "password": "test-password"})
 
+    def test_homepage_serves_demo_ui(self):
+        response = self.client.get("/")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"ZTNA Access Gateway", response.data)
+
     def test_health_is_available(self):
         self.assertEqual(self.client.get("/health").status_code, 200)
 

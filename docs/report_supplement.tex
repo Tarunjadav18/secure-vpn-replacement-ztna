@@ -1,0 +1,268 @@
+% Supporting sections for the IEEE-style report. Included before the bibliography.
+\section{Methodology and Project Execution}
+The work followed a small iterative engineering process. First, the problem was reduced to a resource-access decision rather than a network tunnel: an identity requests one named application, and a policy gate either returns the application response or a denial. Second, functional requirements were converted into individually testable HTTP outcomes. Third, the access gateway and routes were implemented with a deliberately small dependency set. Fourth, automated tests were run against Flask's in-process test client. Finally, the source package and documentation were prepared for local, container, and cloud execution. This order makes it possible to distinguish design intent from implemented behavior and from observed evidence.
+
+No external identity provider, endpoint management service, private connector, cloud service, or synthetic benchmark data was introduced into the local tests. Tests create HTTP requests in process and inspect response status and content. This choice keeps evaluation deterministic, avoids use of real credentials, and tests the policy function without implying that an external system has been integrated. The costs are equally clear: network behavior, proxy behavior, concurrent users, browser rendering, persistence, and deployment-specific behavior are outside the test scope.
+
+The project uses a deny-by-default approach for the protected routes: absence of a valid token is rejected; after authentication, every route still evaluates authorization and context. Public health and landing-page routes are intentionally excluded from the protected resource set. In a production architecture, the health endpoint would need a deployment-specific decision about exposure and information disclosure; here it returns only a generic status.
+
+\subsection{Requirements Traceability}
+Table \ref{tab:trace} maps requirements to concrete implementation elements and verification evidence. A requirement marked implemented is not necessarily production-ready; verification records what the local test actually observes.
+\begin{table*}[t]
+\caption{Requirement-to-implementation traceability}
+\label{tab:trace}
+\centering
+\begin{tabular}{p{0.23\textwidth}p{0.24\textwidth}p{0.29\textwidth}p{0.16\textwidth}}
+\toprule
+Requirement & Implementation element & Verification & Status\\
+\midrule
+Interactive demonstration & HTML landing page and browser-side request flow & Homepage response tested, then login + deny + permit manually verified on Mac browser & Implemented and browser-verified\\
+Credential validation & \texttt{POST /login} checks configured account & Wrong-password request returns HTTP 401 & Implemented and tested\\
+Session credential & Random bearer token with expiry timestamp & Login test receives a token; protected route accepts it & Implemented and flow-tested\\
+Authentication enforcement & Request decorator validates token for protected routes & Missing token returns HTTP 401 & Implemented and tested\\
+Application-specific permission & Portal and admin route role sets & Valid admin reaches both routes with positive demo posture & Implemented and tested for admin role\\
+Device context input & Two boolean request headers exposed through demo controls & Missing posture returns HTTP 403; positive posture permits & Simulated and tested; not attested\\
+Decision trace & JSON Lines audit helper & Access flows emit structured decision events in runtime & Implemented; log-file integrity not tested\\
+Local execution & Python module entry point and README commands & Six automated tests and manual local browser flow & Implemented and locally verified\\
+Container execution & Dockerfile with Gunicorn entry point & Docker unavailable in the authoring environment & Configuration prepared; image not built here\\
+Cloud deployment & Render Blueprint with required secret field & No service has been deployed in this evidence set & Prepared; deployment unverified\\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\section{Detailed Architecture and Request Processing}
+The gateway has four conceptual responsibilities. The first is authentication: accept a username and password over an HTTP request and issue a bearer credential after comparison with configured values. The second is session validation: extract the bearer token, locate its record, and reject a missing, unknown, or expired value. The third is policy evaluation: combine the user's role with the requested application and the posture claims. The fourth is enforcement and accounting: return a response consistent with the decision and write a corresponding event to the audit file. The current implementation combines these functions in one Flask process to make the control path easy to inspect.
+
+For a successful login, the token is a URL-safe string generated from 32 random bytes. Python's \texttt{secrets} module is intended for security-sensitive random values; its documentation describes 32 bytes (256 bits) as sufficient for typical token use cases and provides URL-safe token helpers \cite{pythonSecrets}. The token record stores username, role, and expiry time. The expiry check is performed when a protected request arrives. No token value is written to the audit record. Authentication failure also does not write the password to the log.
+
+The token is an opaque bearer credential: whoever possesses it can present it until expiry. That is why a real deployment would require TLS, strict origin and transport handling, short lifetimes, secure storage in a browser, revocation, and possibly sender-constrained tokens. This prototype does not implement a refresh flow, logout route, token binding, or cookie-based browser session. The demonstration page stores the received token in a JavaScript variable in the page's memory, avoiding local storage in this minimal exercise, but it is still a demonstration-only client and is not a complete browser security design.
+
+The access decision is made after token validation, not instead of token validation. The route supplies its application identifier and allowed role set to a common policy function. The function reads the identity from the current request and interprets the device headers as booleans only when their values equal the string \texttt{true} without regard to case. The grant decision requires all rule terms to be true. If any term is false, the function returns a denial with an explanatory response. This decision transparency helps students test each branch but should be weighed against information disclosure in a public service; production error responses may need to be less specific.
+
+\subsection{Policy Decision Examples}
+Table \ref{tab:decisions} enumerates representative policy outcomes. It is a rule table, not a report of separate measured performance trials. A valid administrator on a simulated trusted device is allowed to both applications. The current login path creates only an administrator identity, so the employee rule is present for design clarity but has no end-to-end provisioning test.
+\begin{table}[ht]
+\caption{Policy decision cases}
+\label{tab:decisions}
+\centering
+\begin{tabular}{lllll}
+\toprule
+Token & Role & Posture & Target & Result\\
+\midrule
+Missing & -- & -- & Portal & 401\\
+Expired/unknown & -- & -- & Portal & 401\\
+Valid & Admin & Missing & Portal & 403\\
+Valid & Admin & Positive & Portal & Permit\\
+Valid & Admin & Positive & Admin console & Permit\\
+Valid & Employee & Positive & Admin console & 403\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Implementation Walkthrough}
+The repository is organized so a reviewer can locate code, tests, and documentation without a complex build system. \texttt{src/ztna/app.py} contains the HTTP routes, token map, policy helper, and audit writer. \texttt{src/ztna/templates/index.html} contains the small browser demonstration. \texttt{tests/test\_app.py} contains automated behavior checks. \texttt{Dockerfile} packages the application under Gunicorn. \texttt{render.yaml} describes a Render web service and marks the password as an operator-supplied secret. \texttt{docs/ARCHITECTURE.md} gives a concise diagram and threat summary, while this report provides the academic explanation. The README is the operational entry point.
+
+The local development server binds to loopback (127.0.0.1), which is appropriate for a local classroom demonstration and avoids intentionally exposing the development listener on the Mac's network interfaces. The container path is distinct: Gunicorn binds to the port supplied by the hosting platform, defaulting to 10000 when no value is provided. Flask documentation distinguishes its built-in development server from a production WSGI server and advises a production server for a public deployment \cite{flaskDeploy}. This implementation follows that distinction by using Flask's server only for local development and Gunicorn in the image.
+
+The browser page displays the staged workflow: sign in, select simulated posture, and request the portal or administrator route. The posture controls deliberately state that they are demonstration headers. A user can observe denial when either switch is off and a permit for the administrator when both are on. The API remains available independently for command-line experiments. The backend is authoritative: changing a checkbox changes request context but does not bypass the policy function.
+
+The use of Flask's JSON helpers means API responses are JSON and can be consumed by command-line tools or a browser. The homepage is ordinary HTML with JavaScript fetch calls; it does not need an additional front-end build chain. This decision keeps installation simple for an educational mini-project. It also means that the frontend receives only the protections provided by the browser's same-origin policy and the serving context; no dedicated content security policy, cross-origin policy, or JavaScript bundle integrity process has been configured.
+
+\section{Threat Analysis and Security Properties}
+The project demonstrates selected access-control properties, but it is not a security-certified product. Table \ref{tab:threats} lists threats, the current response, and remaining exposure. The table avoids presenting a modeled control as proof of attacker resistance.
+\begin{table*}[t]
+\caption{Threats, implemented controls, and residual exposure}
+\label{tab:threats}
+\centering
+\begin{tabular}{p{0.2\textwidth}p{0.26\textwidth}p{0.25\textwidth}p{0.23\textwidth}}
+\toprule
+Threat & Implemented control & Residual exposure & Production direction\\
+\midrule
+Anonymous user requests a protected app & Bearer-token check returns 401 & Credentials are a single configured pair & Federated identity, MFA, account lifecycle\\
+Password guessing & Invalid password is rejected and login denial logged & No rate limiting, lockout, or anomaly detection & Identity provider throttling and risk controls\\
+Token guessing & Random 256-bit token value & Memory-only tokens lack revocation and cross-worker sharing & Signed/session infrastructure, revocation, shared store\\
+Token theft & Short-lived token & No TLS in local mode; no sender binding & TLS, secure client handling, scoped sessions\\
+Role reaches wrong application & Per-route role set and decision function & Only administrator is provisioned end to end & IdP groups/claims and policy administration\\
+Compromised or unmanaged endpoint & Posture claim checked each request & Client can forge both headers & Trusted MDM/EDR integration and attestation\\
+Excess network reach & Only named HTTP routes are exposed & Prototype has no actual downstream private app isolation to assess & Private connectors and network segmentation\\
+Audit event tampering or loss & Structured append to JSON Lines file & File can be changed or lost; host disk may be ephemeral & Remote append-only protected logging\\
+Secret leakage & Password comes from environment; .env ignored & Default password exists for convenience if unset & Fail closed, platform secret manager, rotation\\
+Malformed or abusive request load & Framework request parsing & No rate, size, concurrency, or denial-of-service controls & Ingress limits, monitoring, capacity testing\\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+The most important limitation is the device signal. In an enterprise design, a policy engine should rely on a trustworthy source for device posture rather than a value that the requester controls. A header is useful here because it makes the policy input visible and easy to manipulate in a classroom demonstration, but that same property makes it unsuitable as proof. The report therefore refers to posture as simulated. A production posture pipeline would need device enrollment, identity binding, signal freshness, trust in the issuing service, and a policy for missing or stale signals.
+
+A second limitation is session handling. The global in-memory dictionary is process-local. A restart loses sessions; multiple workers would maintain separate maps; there is no revocation or persistence. The container is configured with one Gunicorn worker so that a low-volume demo keeps token issuance and checking in the same process. This is a deliberate demonstration constraint, not a scale-out design. A production multi-worker deployment must replace the in-memory map with a shared session store and revocation model.
+
+The gateway fails closed at startup if \texttt{ZTNA\_ADMIN\_PASSWORD} is absent. This avoids silently deploying a known fallback secret, while requiring the local evaluator to set a demo password explicitly. The Render Blueprint marks the password as an operator-supplied secret. A production implementation should also apply secret rotation and policy checks; this prototype only separates the secret from source.
+
+Authentication and authorization weaknesses are common API risks; OWASP identifies broken authentication as a leading API security category and emphasizes robust authentication boundaries \cite{owaspApiAuth}. This project tests only elementary happy and denied flows. It does not claim resistance to credential stuffing, brute force, session fixation, replay, cross-site scripting, cross-site request forgery, or API abuse. It has no real user database and no password hashing because the credential is supplied as one environment value, not stored as a record. That is not a model for a workforce password system.
+
+\section{Verification Plan and Observed Results}
+The test suite uses Flask's test client so each case can create an application request without a live TCP listener. This is useful for route and policy logic, but it does not demonstrate that a browser can connect to the running process or that an external host can reach it. The authoring environment returned an operating-system permission error when attempting to bind the development server socket. This is an environment restriction, not a successful runtime check. On the user's Mac, the README provides commands to launch on loopback and open the page in a browser.
+
+The six tests assert: (1) the protected application returns 401 without a token; (2) the health route returns 200; (3) the homepage returns HTML containing the gateway label; (4) invalid credentials return 401; (5) a valid token without positive device posture returns 403; and (6) an administrator token with both posture claims reaches both demo applications. These checks cover important branches but do not exhaust combinations, such as unknown tokens, expired tokens, non-admin roles, log-file failures, repeated logins, or concurrent access. The exact observed run reported six tests, six passes, and zero failures on the Python 3.9.6 authoring environment.
+
+No load test was run. No latency figure, availability percentage, CPU or memory utilization, throughput, false-acceptance rate, or false-rejection rate is reported. The current repository had not yet been pushed at the time these local results were captured, and no Render deployment had been verified. The source includes a Dockerfile and hosting manifest, but configuration presence is not evidence of a successfully built image or live service.
+
+For a class demonstration, the evaluator can start the server, log in using a locally configured secret, request the portal with no posture selected to observe denial, then enable both posture controls and request again to observe the permit. The evaluator can also disable one of the posture conditions to see that the decision changes. This demonstration explains request-level reevaluation and application scoping without claiming that the browser toggles report actual device health.
+
+\subsection{Reproducible Test Procedure}
+From the project root, the test procedure is:
+\begin{lstlisting}[basicstyle=\ttfamily\footnotesize]
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -r requirements.txt
+python3 -m unittest discover -s tests -v
+\end{lstlisting}
+The observed output in the current authoring environment ends with \texttt{Ran 6 tests} and \texttt{OK}. Dependency versions are pinned in \texttt{requirements.txt}; a fresh environment should install those versions rather than rely on globally installed libraries. Tests set a test password in process and do not use a real account credential.
+
+\section{Local Demonstration Procedure for macOS}
+A macOS demonstration uses Python 3.9 or later, a virtual environment, Flask, and a browser. From the project directory, create and activate the environment, install dependencies, set a non-default demo password in the shell, and run the module. The application binds to \texttt{127.0.0.1:8000}; the browser then opens the local homepage. The password is not written to the repository. The first request should be a health check, followed by a login and an application request. Closing the terminal stops the local process and invalidates its in-memory tokens.
+
+For command-line use, the test credentials in \texttt{.env.example} are examples only. A session token should be treated like a password: do not paste it into screenshots, public chat, or source control. The interactive browser page keeps the token in page memory but does not persist it. If an evaluator needs to demonstrate with cURL, the token can be captured in a shell variable for that terminal session, then used with the bearer authorization header. Shell history handling depends on how the command is entered; a production client would not print or store tokens in command history.
+
+The gateway's development listener is intentionally loopback-only. To show the browser demonstration on the Mac, use the same host. The project should not be exposed to a campus network or public internet through the development server. Public hosting is handled by Gunicorn in the Docker container and a hosting ingress. Flask explicitly cautions that its development server is for local development rather than a secure, stable public server \cite{flaskDeploy}.
+
+\section{Cloud Deployment Design and Operational Readiness}
+The Render Blueprint defines a Docker web service, a health-check path, and a password environment variable marked with \texttt{sync: false}. Render supports web services sourced from Git repositories or Docker images and supports environment variables and secrets for service configuration \cite{renderWeb,renderEnv}. This project uses the Git-connected path as the anticipated deployment method: push the project to a GitHub repository, connect that repository in Render, check the service configuration, provide a random password in Render's environment settings, deploy, and verify the health endpoint. The secret must not be committed into Git or baked into the image.
+
+A health check indicates that the process can answer a simple route; it does not verify that authentication, policy enforcement, audit persistence, or downstream application connections work. A complete deployment verification should record the build result, deployed commit, service status, public URL, health response, successful and denied application requests, and whether the platform restarts the instance or routes requests across multiple workers. The bearer token map being process-local makes multi-worker routing a known concern. If requests reach a different worker after login, an otherwise valid token may be rejected. The deployment should either use one worker for this demonstration or replace in-memory tokens with shared state before using multiple workers.
+
+Render's web service exposes a public URL, so any deployed demo should use a strong secret, avoid real data, and be shut down when no longer needed. The current posture controls remain forgeable even behind HTTPS; TLS encrypts the transport but does not make a client-provided claim trustworthy. For that reason, deployment supports an educational demonstration only. It must not be described as protection for real organizational resources. The Docker image uses one worker because the demonstration token map is process-local. This avoids a token being created in one worker and checked in another during a low-volume demonstration, but restricts concurrency and does not provide redundancy.
+
+At the time of the present report revision, the repository exists as a private GitHub project, but project source push and Render deployment are pending GitHub CLI authorization. No remote commit or live service result is claimed. The user is completing the device login step. This status is intentionally explicit so the report does not mistake account sign-in in a browser for a completed source push or deployment.
+
+\section{Evaluation, Limitations, and Validity}
+The implementation meets its core local objective: it shows a named application access decision requiring identity, role, and device context, and it does not expose an internal subnet. Automated tests confirm the principal status-code transitions and that the demonstration page is served. This provides functional evidence that the control path is executable as a Flask application. The tests do not establish security effectiveness under real adversarial conditions.
+
+Construct validity is limited because the variable called device posture is represented by HTTP headers. In an operational system, a posture decision would need verifiable endpoint signals and an authenticated link between the device and the user session. Internal validity is bounded by the small test suite: not all error branches and concurrency conditions are exercised. External validity is low because the prototype has a single configured account, two routes, one process-local store, and no production traffic. Reproducibility is improved by dependency pins, a test command, and container files, although the local machine's network sandbox blocked a live socket test and Docker was not installed in the authoring environment.
+
+The project also has a mismatch between the cloud server worker count and the process-local token store. This matters because the container runs multiple Gunicorn workers while tokens are kept in a Python dictionary per worker. A hosted end-to-end login may therefore appear intermittent depending on worker routing. The correct next implementation change is a shared session store or one worker for the low-volume demonstration, then a fresh deploy and test. Until that work is completed, a cloud login flow should not be claimed as verified.
+
+The browser UI itself has been checked through the Flask test client for HTML response, but no interactive browser flow against a live local process has yet been observed. JavaScript interaction, CSS layout across screen sizes, local browser compatibility, and behavior with network errors need manual verification on the Mac. That manual check should be recorded as an observation rather than inferred from a successful template response.
+
+\section{Future Work Roadmap}
+The next phase should replace the shared environment credential with OIDC authentication and a test realm in Keycloak, establish per-user and per-role claims, require MFA, and validate signed issuer, audience, expiry, and nonce values. The application should map identity-provider groups to application-specific roles instead of defining an unreachable employee role in code. The login endpoint should also use a dedicated identity library rather than compare against a configured shared password, and it should implement the provider's state, nonce, issuer, audience, and redirect validation requirements. The gateway should provide logout and revocation and should avoid placing tokens in persistent browser storage.
+
+The device posture phase should consume trusted signals from an endpoint management or security platform. The signal should have a timestamp, device identifier, issuing service, and integrity protection. Policy should define how stale or unavailable posture is handled and how a device transitions from non-compliant to compliant. Test fixtures can simulate those assertions locally, while a staging integration tests the actual trust source.
+
+The session and audit phase should replace process memory with a shared store, define token rotation and revocation semantics, and test worker-to-worker consistency. Audit records should be transported to a protected central sink with controlled retention and access. The service should implement rate limits, security headers, secret validation at startup, robust error handling, and observability that avoids capturing credentials or bearer tokens.
+
+The application connectivity phase should connect real test applications through a private connector, restrict direct public access to those applications, and verify that a user who obtains access to one application cannot enumerate or reach another. This would make the resource-centric boundary closer to a practical ZTNA architecture. Performance and reliability testing should then measure decision latency, concurrent sessions, failure behavior, and policy update propagation. All numerical results should be captured from repeatable experiments with a stated environment and procedure.
+
+\section{Conclusion}
+The prototype provides a usable teaching demonstration of application-level access decisions with identity, role, and context conditions. The implementation now includes an interactive browser interface, a Flask API, structured access events, automated tests, container configuration, and a Render Blueprint. The six local automated checks pass. The results demonstrate code paths, not production-grade trust or deployment readiness. Simulated posture claims, a single configured account, process-local tokens, the default local password, and the absence of a verified deployment remain material limitations. The next deliverable stage is to authorize terminal GitHub access, push the repository, resolve the session-store/worker concern, deploy with a secret, and verify live health and access outcomes before adding deployment evidence to the final report.
+
+
+\section{Design Alternatives and Rationale}
+Several design choices were considered to keep the prototype small enough to implement and inspect within a mini-project schedule. A full identity deployment with an external identity provider would demonstrate federation and MFA more realistically, but it would introduce a separate service, realm configuration, client registration, secret handling, and cross-container networking. The initial prototype therefore uses one environment-configured account and clearly marks OIDC as future work. This makes the behavior self-contained but significantly limits the strength and realism of identity assurance.
+
+A second design choice concerns the enforcement point. A network VPN could be modeled with tunnel software, routes, and firewall rules, but that would make the central project question harder to isolate because the demonstration would depend on operating-system network configuration. The Flask gateway instead exposes two named application routes. This makes the difference between an identity-to-application decision and network membership visible in the code. It also means the prototype does not demonstrate a private connector or an application that lives behind an enterprise firewall.
+
+A third option was to use a signed JWT rather than an opaque random token. A JWT could make token validation stateless across workers, but it would introduce signing-key rotation, issuer and audience configuration, algorithm selection, revocation semantics, and claim-validation requirements. An opaque random token with an in-memory table was selected for readability. It provides expiry checking but not scale-out or durable sessions. The implementation uses one container worker so the classroom demonstration avoids cross-worker token inconsistency; the design remains a single-process model.
+
+For the user interface, a small server-rendered page with browser fetch calls was chosen over a separate React/Vue application. The page can call login and application routes on the same origin and requires no front-end dependency installation. This keeps the repository easier to run on a student's Mac. The trade-off is that the browser client does not represent a full enterprise access portal and has not undergone a comprehensive accessibility, cross-browser, or browser security review.
+
+\section{Detailed Test Case Descriptions}
+The health test requests \texttt{/health} with no credentials and expects HTTP 200. It confirms that the Flask route is registered and returns its generic status. It does not prove downstream readiness or report any database or identity-provider health, because neither is present. The homepage test requests \texttt{/} and checks for an HTML response containing the gateway title. It verifies template loading under the test client but not browser JavaScript execution or layout.
+
+The invalid-credential test submits the configured username with a wrong password and expects HTTP 401. It confirms that the unauthenticated path does not issue a session token. The missing-token test calls the portal endpoint without an Authorization header and expects HTTP 401, demonstrating that route access is not granted solely because the application is reachable. The posture-denial test obtains a valid token but omits the posture headers; the request is authenticated but not authorized, so HTTP 403 is expected. The trusted-device test obtains a valid token, includes both positive posture headers, and requests both the portal and admin routes. It expects HTTP 200 for each as the provisioned role is admin.
+
+The manual local browser verification uses the same visible state transitions. First, the operator enters the local demo credential and signs in. Second, with both posture switches disabled, the portal request returns an explanatory HTTP 403 response. Third, the operator enables both switches and requests the portal again; the page displays HTTP 200 and the application response. This manual check confirms the running Flask process, HTTP listener, template rendering, browser event handlers, API requests, and policy response work together on the inspected Mac. It is evidence for the local demonstration only and does not imply that the UI is secure for production use.
+
+A stronger future test suite should include an expired token, a fabricated unknown token, each individual missing posture claim, non-admin role access to the administrator route, audit event content and redaction, audit-file write failure, malformed JSON, missing required configuration, startup fail-closed behavior, and token lifetime behavior using a controllable clock. Integration testing should run the actual container, send requests through the chosen ingress, and verify session behavior across process restarts. Security testing should check credential guessing limits and ensure secrets or bearer tokens do not appear in logs.
+
+\section{Audit Event Semantics}
+The audit helper emits one JSON object per line. Fields include the integer Unix timestamp, event name, user if known, request source address, and a detail object. Login success and denial events capture credential-result category without storing the submitted password. Protected resource requests emit access-allowed or access-denied events, application name, role, observed posture values, and a reason string. Unauthenticated requests emit a denial with the path and a generic authentication reason.
+
+This format is convenient for a small demonstration because it can be inspected with ordinary text tools and consumed by log processors. It is not a forensic record. The file is writable by the service process; an attacker who gains host write access may change it. The process may be terminated before buffers or writes are durably stored. Cloud instances may use ephemeral filesystems, and no log shipping or retention control is configured. The code logs source IP as seen by the application, which may be an ingress proxy address in a hosted environment unless trusted proxy settings are configured correctly. Therefore, audit completeness and attribution must not be assumed from this prototype.
+
+A production audit design would define an event schema and version, correlate a request identifier across components, avoid logging credentials and bearer tokens, protect events from modification, restrict read access, synchronize clocks, and set a documented retention period. It would also test log delivery during partial outages and control which proxy headers may be trusted. Logging is an important detection and accountability aid, but it does not itself prevent unauthorized access.
+
+\section{Reproducibility and Source Management}
+The deliverable includes pinned Python dependencies, a repeatable unittest command, a README with direct local launch instructions, an example environment file, a Dockerfile, and a Render Blueprint. The test credential is set within the test process, and the runtime refuses to start without an explicit password variable. The local server binds to loopback. These details reduce reliance on implicit machine state and help a reviewer repeat the essential flow.
+
+The local project is maintained as a Git repository with a single initial implementation commit in the user's workspace. The corresponding GitHub repository has been created as private under the user's account, but the source push awaits terminal authorization. Creating the remote repository and pushing its content are separate state changes; the existence of the former does not imply that it contains the files. After authorization, the push should be verified by checking the repository's default branch, commit, and visible files. The report should then record the actual commit identifier rather than infer a completed transfer.
+
+The same principle applies to deployment. A checked-in deployment manifest makes deployment repeatable but does not create a service by itself. Render must be connected to the GitHub repository, the secret must be configured in its dashboard, the build must complete, and a live URL must be checked. The final evidence set should keep three records separate: local automated test results, local interactive demonstration, and cloud deployment verification. This separation improves academic defensibility because each result has a defined execution environment and observation method.
+
+
+\section{Mapping to Zero Trust Concepts}
+NIST SP 800-207 emphasizes that ZTA protects resources and does not grant implicit trust based on network location or asset ownership \cite{nist207}. The prototype reflects this idea in a narrow form: it does not create a network tunnel or assign the user an address on an internal subnet; instead, it exposes a named portal route and a named administration route. A network connection to the gateway is therefore only a means to present a request and is not itself an authorization decision.
+
+The prototype also represents repeated evaluation at the protected resource boundary. Each HTTP request to a protected path checks the token and invokes the route policy again. The application cannot rely on a prior page view as an ongoing grant. The evaluation inputs are intentionally limited to an identity record, a role, and two context claims. A production ZTA policy would typically use richer information, such as authentication strength, group membership, device identity, device health freshness, resource sensitivity, time, risk signals, and operational constraints. This implementation demonstrates the pattern but does not implement the broader policy context.
+
+The route-level policy helper can be viewed as a combined simplified policy decision and enforcement function. It receives a request and decides; Flask then either returns the protected response or a denial. The prototype does not separate a policy engine, policy administrator, and policy enforcement point into independently managed services. This is a practical scope choice for a mini-project, but it also prevents the evaluation of policy distribution, enforcement consistency, and failure behavior between those architectural components.
+
+The absence of a VPN tunnel is not equivalent to eliminating the network layer from security. DNS, transport encryption, ingress routing, firewall boundaries, connector placement, and service-to-service paths continue to matter. A real remote-access system would still need a secure path from the enforcement point to the protected application and controls that prevent direct access around that enforcement point. The current demo contains no real downstream application, so it cannot demonstrate bypass resistance or connector isolation.
+
+\section{Failure Modes and Operational Questions}
+When a user submits invalid credentials, the service returns a generic unauthorized response and writes a login-denied event. The response does not reveal whether the username or password was incorrect, reducing account enumeration in the simple login flow. Because there is no throttling, an attacker could repeat guesses at the route. Production readiness requires rate limiting and monitoring at the ingress or identity provider, plus a plan for account lockouts that avoids denial-of-service against legitimate users.
+
+When the token is missing or expired, the decorator denies the request before the application-specific policy runs. This avoids evaluating authorization with an absent identity. The current expired token is removed from the in-memory map only when that token is presented again; stale entries may remain if never revisited. A production token store would need expiration cleanup, capacity limits, revocation, and protection against resource exhaustion.
+
+When posture is absent, false, or malformed, the current helper treats it as false unless the header value equals \texttt{true} case-insensitively. This is a fail-closed choice for the demonstration. It prevents unexpected strings from granting access, but it does not establish authenticity. A production integration needs to define how unavailable, stale, or contradictory device information affects access. A strict policy may deny; a risk-based design may permit limited access under additional controls. Such choices should be specified by the organization rather than assumed by a prototype.
+
+If audit file creation or append fails, the helper records an exception in the application logger and continues with the access decision. This preserves availability of the request path but means the audit event may be absent. A production system should explicitly decide whether authorization may proceed when audit delivery is unavailable, implement durable queuing or a protected sink, and alert on the failure. The demo keeps the policy and local logging code straightforward so the control flow remains visible.
+
+If the process restarts, all in-memory tokens disappear. Users must sign in again. This is acceptable for a brief classroom trial and provides no persistence beyond a process lifetime. For high availability, the token architecture must be externalized or cryptographically verifiable with carefully managed keys and revocation. A JWT substitution alone would not solve all concerns; the issuer, audience, algorithm, claim freshness, key rollover, and revocation semantics would still need validation.
+
+\section{Evaluation Criteria for a Final Demonstration}
+A successful classroom demonstration should be judged against observable steps rather than labels. The operator starts the process with an explicit demo password and opens the loopback URL. The page should render without a build step. A correct password should create a temporary identity state in the page. With both posture values disabled, the portal request should show a denial response and the response should identify the route policy as the reason. After both values are enabled, the same authenticated user should receive a portal response. The admin route should also be allowed for the only configured admin identity. A wrong password should yield a generic 401. These observations demonstrate the difference between authentication and authorization in the actual running application.
+
+The report records the successful local sequence performed in the Mac browser: login succeeded; the portal request with both posture inputs disabled returned HTTP 403; enabling the managed and compliant inputs produced HTTP 200 and the portal JSON response. The password used for that local run was a temporary demonstration-only value set in the process environment and is not part of the repository. It should not be reused as an account credential. The HTML, JavaScript, and Flask route participated in this observation, although the single browser check is not a substitute for cross-browser testing or usability evaluation.
+
+A deployment demonstration should be judged separately. The Render service must show a completed deploy for the intended repository commit, a service URL, and a successful health check. The operator should then repeat the login and policy denial/permit flow using the live URL and report both responses. If the service unexpectedly rejects a token across requests, investigate worker behavior and request routing rather than weakening the policy. A health response alone is insufficient evidence of a functioning access workflow.
+
+The final evaluation record should include the source revision, Python and dependency environment, test command and output, date of manual demonstration, local URL or hosted URL, and a concise statement of what each test establishes. It should also identify test data and avoid publishing secrets. This practice makes the mini-project reproducible and helps the evaluator distinguish implementation evidence from future-work proposals.
+
+\section{Responsible Demonstration and Data Handling}
+The prototype is configured for an educational walkthrough and should use a synthetic demo password with no reuse from the user's accounts. The private repository reduces public exposure while it is in development, but it does not justify placing secrets into the codebase. The password is configured through an environment variable, and the example file contains a placeholder only. If the repository is later made public, the example and documentation can remain, but no real credential, token, log record, or personal data should be committed.
+
+The public Render endpoint, if deployed, would be accessible to anyone who learns the URL unless additional restrictions are added. The demo identity is a single shared administrator, so publishing a weak demo password could allow all routes to be reached. A strong random value should be used and kept only in Render's secret configuration. Because the posture flags are intentionally user-controlled, the hosted deployment must be described as a demonstration of a decision flow, not as an access boundary protecting real services. The operator should remove or suspend the service after evaluation if it is no longer needed.
+
+No real user identity, organizational application data, endpoint telemetry, or credentials are required by the test suite. Test requests use a synthetic username and password. This minimizes data collection and avoids dependence on a user's employer or school identity provider. If future work integrates a real IdP or endpoint platform, the study should document which test data is exchanged and avoid collecting more personal information than needed for the experiment.
+
+\appendices
+\section{Appendix A: Endpoint Contract}
+\begin{table*}[t]
+\caption{HTTP interface}
+\centering
+\begin{tabular}{llll}
+\toprule
+Method and path & Input & Success response & Denial behavior\\
+\midrule
+GET / & None & HTML demonstration page & Not applicable\\
+GET /health & None & JSON status & Not applicable\\
+POST /login & JSON username/password & Bearer token and expiry & 401 invalid credentials\\
+GET /apps/portal & Bearer token and posture headers & Portal JSON & 401 missing/expired token; 403 policy denial\\
+GET /apps/admin & Bearer token and posture headers & Admin JSON & 401 missing/expired token; 403 policy denial\\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+The login request uses JSON with \texttt{username} and \texttt{password}. The response includes \texttt{access\_token}, token type, and expiry seconds. The client must send the token in an Authorization header using the Bearer scheme. The posture inputs are headers named \texttt{X-Device-Managed} and \texttt{X-Device-Compliant}; their values must be \texttt{true} for a positive demo claim. These names and values are part of the prototype contract and are not interoperable device-attestation standards.
+
+\section{Appendix B: Configuration Reference}
+\begin{table}[ht]
+\caption{Environment variables}
+\centering
+\begin{tabular}{lll}
+\toprule
+Variable & Purpose & Default\\
+\midrule
+\texttt{ZTNA\_ADMIN\_USER} & Configured demo identity & admin\\
+\texttt{ZTNA\_ADMIN\_PASSWORD} & Required demo credential & no default\\
+\texttt{ZTNA\_TOKEN\_TTL\_SECONDS} & In-memory token lifetime & 3600\\
+\texttt{ZTNA\_AUDIT\_LOG} & JSONL event path & /tmp/ztna-audit.jsonl\\
+\texttt{PORT} & Local HTTP port & 8000\\
+\bottomrule
+\end{tabular}
+\end{table}
+The gateway refuses to start until a password is configured. The operator must set a local demo password and set the Render secret before deployment. The audit path may be changed for a local exercise; the default container path is temporary and should not be assumed durable. The port variable is interpreted by the local module; the Docker command uses the hosting environment's port when supplied.
+
+\section{Appendix C: Observed Verification Record}
+The verified local record for this revision is: Python 3.9.6 authoring environment; test command \texttt{python3 -m unittest discover -s tests -v}; six test methods; six passes; zero failures. The tested behaviors were homepage HTML, health, invalid-password rejection, missing-token rejection, posture denial, and administrator access to both named routes with positive posture. In addition, the live local browser flow on the Mac was manually exercised: login succeeded, the portal request without posture returned HTTP 403, and the request with managed and compliant demo claims returned HTTP 200. The local endpoint was \texttt{http://127.0.0.1:8000}. The record does not contain a container build, GitHub push, or Render deployment; those items remain pending and must be replaced with evidence after completion.
