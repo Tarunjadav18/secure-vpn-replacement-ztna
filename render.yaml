@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: ztna-demo-gateway
+    runtime: docker
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: ZTNA_ADMIN_USER
+        value: admin
+      - key: ZTNA_ADMIN_PASSWORD
+        sync: false
+      - key: ZTNA_TOKEN_TTL_SECONDS
+        value: "3600"

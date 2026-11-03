@@ -1,0 +1,104 @@
+\documentclass[conference]{IEEEtran}
+\usepackage{cite}
+\usepackage{url}
+\usepackage{booktabs}
+\usepackage{listings}
+\title{Secure VPN Replacement Using Zero Trust Network Access Architecture: An Executable Prototype}
+\author{\IEEEauthorblockN{Student Name}\IEEEauthorblockA{Department / Institution\ \texttt{student@example.edu}}}
+\begin{document}
+\maketitle
+\begin{abstract}
+Traditional virtual private networks (VPNs) commonly provide network-level connectivity after a user authenticates. Zero Trust Architecture (ZTA) instead focuses access decisions on a subject, a device, and a specific resource, and does not treat network location as sufficient evidence of trust. This project implements a small, executable Zero Trust Network Access (ZTNA) demonstration gateway using Python and Flask. A user authenticates against a configured account, receives a short-lived bearer token, and requests one of two application routes. The gateway checks identity, an application-specific role, and managed/compliant device posture claims on each protected request, then records permit or deny events in JSON Lines format. Five local automated tests cover health, invalid credentials, authentication enforcement, posture denial, and allowed access. All five pass in the inspected environment. This prototype demonstrates the policy flow and application-level access model; it does not provide production-grade identity, attestation, TLS, durable audit storage, or protection for real services. Its posture headers are caller-supplied and therefore intentionally treated as a simulation. The implementation is container-ready and includes Render Blueprint configuration, but no remote deployment has been claimed or verified.
+\end{abstract}
+\begin{IEEEkeywords}
+Zero Trust Architecture, ZTNA, remote access, access control, device posture, application gateway
+\end{IEEEkeywords}
+
+\section{Introduction}
+Remote work and cloud-hosted applications weaken the assumption that a corporate network perimeter cleanly separates trusted users from untrusted users. A VPN can establish an encrypted path, but network reachability alone does not express whether a particular identity should reach a particular application under current conditions. NIST describes ZTA as a move from static network defenses toward users, assets, and resources, with authentication and authorization performed before access to an enterprise resource is established \cite{nist207}. This project explores a small implementation of that shift.
+
+\subsection{Problem Statement}
+The project asks how a remote-access prototype can grant access to named applications without placing a remote client on an internal network. The prototype must require authentication, make a per-application authorization decision, include a device-condition input, and retain decision evidence for inspection.
+
+\subsection{Objectives}
+The objectives are: (1) implement a runnable gateway; (2) demonstrate token-based authentication; (3) enforce role and device posture conditions separately for two applications; (4) log both grants and denials; (5) package the implementation for local and container execution; and (6) verify expected behavior through automated tests.
+
+\section{Background and Related Concepts}
+ZTA is an architectural approach rather than a single product. Its central distinction for this prototype is resource-centric policy: each protected request is evaluated using identity and context rather than assuming that a network location implies permission \cite{nist207}. In a full system, a policy engine and policy enforcement point work with identity, endpoint, and resource information. Here, the Flask gateway combines a simplified decision function and enforcement point, while the protected application paths stand in for individual resources.
+
+VPN and ZTNA are not interchangeable implementations of the same control. A VPN provides network connectivity; this prototype provides only HTTP access to two named routes. This narrower scope reduces exposed reach in the demonstration, but the project does not claim that two Flask endpoints replace every function of an enterprise VPN. Secure transport, identity federation, endpoint management, and private connectors remain deployment concerns.
+
+\section{Requirements}
+\subsection{Functional Requirements}
+The service shall expose a health endpoint, accept credentials at a login endpoint, issue an expiring bearer token for valid credentials, reject protected-route requests without a valid token, evaluate role and device posture at each application route, and append access decisions to a JSONL file.
+\subsection{Non-Functional Requirements}
+The project shall run with Python and Docker, keep the configured password outside source control, provide understandable HTTP status outcomes (401 for missing/invalid authentication and 403 for policy denial), and make the policy behavior testable without external services.
+\subsection{Limitations in Scope}
+A single configured administrator account is used. The employee role appears in the policy rule but is not provisioned by the current login flow. There is no password database, account recovery, MFA, OIDC, TLS configuration, browser UI, tenant isolation, or enterprise-grade telemetry.
+
+\section{System Architecture}
+Fig. \ref{fig:arch} presents the logical path. An untrusted remote client calls the gateway. Login returns a random opaque token held in process memory with an expiration timestamp. For each protected request, middleware validates the token, then the route policy checks whether the role is permitted and whether both posture claims are true. The route either returns a demonstration application response or denies access. The decision is written to a local audit file.
+\begin{figure}[ht]
+\centering
+\begin{tabular}{c}
+Remote client (untrusted)\\$\downarrow$ HTTP request + identity token + posture claims\\
+Flask gateway: token check $\rightarrow$ policy decision $\rightarrow$ enforcement\\$\downarrow$ Permit / Deny\\
+Named application route: portal or admin console\\$\downarrow$\\JSONL access-decision log
+\end{tabular}
+\caption{Prototype request and decision path.}
+\label{fig:arch}
+\end{figure}
+
+\subsection{Policy Model}
+For application $a$, identity $u$, and request context $c$, the permit rule is:
+\begin{equation}
+Permit(a,u,c)=TokenValid(u) \land RoleAllowed(a,u) \land Managed(c) \land Compliant(c).
+\end{equation}
+The portal permits administrator or employee roles. The administrative route permits administrators only. Both require managed and compliant posture. Authentication failure produces HTTP 401; a failed authorization condition produces HTTP 403.
+
+\subsection{Data Flow}
+The login endpoint compares the submitted username and password against environment-configured values, creates a 32-byte URL-safe random token, and retains its identity and expiry in an in-memory dictionary. A protected request supplies the token in the Authorization header. The request also supplies two demo headers, \texttt{X-Device-Managed} and \texttt{X-Device-Compliant}. The policy function evaluates these values for every request. Audit records contain timestamp, event, username when known, source IP, and decision context.
+
+\section{Implementation}
+The application is implemented in Python with Flask. The source is organized under \texttt{src/ztna}; unit tests are under \texttt{tests}. Environment variables configure the administrator username and password, token lifetime, and audit-file path. The Docker image installs pinned Flask and Gunicorn versions and binds to Render's supplied port, with a local default of 10000 in the container. A Render Blueprint declares the Docker service and marks the password as a secret that must be supplied by the operator.
+
+The main implementation boundary is deliberately small: \texttt{/login} performs authentication; a decorator enforces bearer-token presence and expiry; per-route functions invoke the shared policy; and the audit helper appends structured events. There is no internal network tunnel, subnet routing, or general-purpose proxy. The application routes are local demonstrations rather than connections to external business systems.
+
+\subsection{Security Decisions}
+The token is generated using Python's cryptographic secrets module and has a configurable time-to-live. Comparisons of the configured login strings use constant-time comparison. Default credentials are provided only to make first-run evaluation possible, and the README instructs operators to override the password. The default must never be used for deployment. In-memory token storage is simple to inspect but unsuitable for multi-worker or durable operation: workers do not share sessions and restarts invalidate them.
+
+\section{Testing and Results}
+Tests were executed locally with Python's built-in unittest runner using Flask's test client. The observed run completed five tests with five passes and zero failures. Table \ref{tab:tests} reports expected and observed status codes.
+\begin{table}[ht]
+\caption{Local test evidence}
+\label{tab:tests}
+\centering
+\begin{tabular}{lll}
+\toprule
+Case & Expected & Observed\\
+\midrule
+Health endpoint & 200 & Pass (200)\\
+Invalid password & 401 & Pass (401)\\
+Protected route, no token & 401 & Pass (401)\\
+Valid token, no posture & 403 & Pass (403)\\
+Valid token and posture & 200 & Pass (200)\\
+\bottomrule
+\end{tabular}
+\end{table}
+The automated checks support the stated control-flow behavior only. They do not assess cryptographic strength, real device state, throughput, resilience, privacy compliance, or resistance to a determined attacker. The posture-positive test uses client-supplied headers, which can be forged; its success confirms only that the policy branch accepts positive demo claims.
+
+\section{Deployment and Reproducibility}
+For local use, install dependencies from \texttt{requirements.txt}, set \texttt{ZTNA\_ADMIN\_PASSWORD}, and run \texttt{python -m src.ztna.app}. The service listens on port 8000 locally. The provided Dockerfile builds a web container. The Render Blueprint specifies a health path and requires the service operator to set the password secret. Render supports web services from linked Git repositories or Docker images and allows secrets to be configured as environment variables \cite{renderWeb,renderEnv}. No repository was visible through the connected GitHub integration in this session, and no Render account connection or deployed service was available; consequently, this report records no remote URL or live deployment result.
+
+\section{Discussion}
+The prototype makes a useful teaching distinction between authenticating a user and authorizing access to a specific resource. It also demonstrates deny-by-default behavior for absent tokens and missing posture claims. The implementation is intentionally small enough to inspect and execute, and its tests make the key decision outcomes reproducible. Its limitations are substantial: an application endpoint is not an enterprise access broker, header claims are not trustworthy posture evidence, and a single shared account does not model a workforce identity lifecycle. A real service would need a trusted identity provider, multifactor authentication, verified device signals, signed and scoped credentials, revocation, protected logging, TLS, rate limiting, and operational monitoring.
+
+\section{Conclusion and Future Work}
+This project implements a container-ready ZTNA demonstration that avoids granting network-level access and evaluates every protected request against identity, role, and simulated device posture. All five local tests pass for the expected flows. It establishes an executable basis for further study, while making clear that simulation-level posture and local in-memory state do not constitute production security. Future work should integrate an OIDC identity provider such as Keycloak, establish trusted endpoint attestation, connect a real application through a controlled private connector, centralize tamper-resistant audit events, and measure latency and denial behavior under load. Those extensions should be implemented and tested before being represented as project results.
+
+\begin{thebibliography}{00}
+\bibitem{nist207} S. Rose, O. Borchert, S. Mitchell, and S. Connelly, ``Zero Trust Architecture,'' NIST Special Publication 800-207, Aug. 2020, doi: 10.6028/NIST.SP.800-207.
+\bibitem{renderWeb} Render, ``Web Services,'' Render Documentation. [Online]. Available: \url{https://render.com/docs/web-services}. Accessed: Nov. 3, 2026.
+\bibitem{renderEnv} Render, ``Environment Variables and Secrets,'' Render Documentation. [Online]. Available: \url{https://render.com/docs/configure-environment-variables}. Accessed: Nov. 3, 2026.
+\end{thebibliography}
+\end{document}
