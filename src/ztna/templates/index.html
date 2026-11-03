@@ -22,7 +22,7 @@
 <h2>3 · Request an application</h2><div class="apps"><button class="btn secondary" data-app="portal">Employee portal</button><button class="btn secondary" data-app="admin">Admin console</button></div>
 <div id="decision" class="status">No access request yet</div>
 </section></div>
-<div class="note"><strong>Educational prototype:</strong> posture claims are caller-controlled, sessions are held in memory, and this service is not suitable for protecting real applications. The local server has no TLS.</div>
+<div class="note"><strong>Educational prototype:</strong> posture claims are caller-controlled, sessions are held in memory, and this service is not suitable for protecting real applications. Render serves the hosted demo over HTTPS; the local development server uses HTTP.</div>
 </main>
 <script>
 let token=null;const identity=document.querySelector('#identity'),decision=document.querySelector('#decision');

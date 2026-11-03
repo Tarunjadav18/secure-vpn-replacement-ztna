@@ -41,7 +41,7 @@ docker run --rm -p 8000:8000 -e ZTNA_ADMIN_PASSWORD='use-a-long-random-secret' z
 
 ## Deploy to Render
 
-`render.yaml` describes a Docker web service and prompts for `ZTNA_ADMIN_PASSWORD` as a secret (`sync: false`). Connect this repository in Render, set that environment variable in the service dashboard, deploy, then confirm `/health` returns `{"status":"ok"}`. Never commit `.env` or secret values. This deployment is a public demo; the current self-asserted posture design is not suitable for production.
+The project is deployed on Render at <https://ztna-demo-gateway.onrender.com>. The Blueprint uses the Docker web service and stores `ZTNA_ADMIN_PASSWORD` as a Render secret; the secret is not in this repository. The free Render instance can spin down when idle, so its first request may take longer. The live health check and browser login/deny/permit flow were verified on Nov. 3, 2026. This is a public demo; caller-supplied posture claims are not suitable for protecting real applications. Never commit `.env` or secret values.
 
 ## Architecture and project report
 
