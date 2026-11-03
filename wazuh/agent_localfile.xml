@@ -1,7 +1,0 @@
-<!-- Merge this localfile block inside the existing <ossec_config> element
-     in the Wazuh agent's ossec.conf. The app and agent must share this host. -->
-<localfile>
-  <location>/tmp/ztna-audit.jsonl</location>
-  <log_format>json</log_format>
-  <label key="@source">ztna-gateway</label>
-</localfile>
